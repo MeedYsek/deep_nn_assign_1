@@ -6,6 +6,7 @@ from PIL import UnidentifiedImageError
 from tqdm import tqdm
 import timm  # Required for PNASNet-5
 import json  # For saving metrics
+from torch.cuda.amp import autocast, GradScaler  # Mixed precision training
 
 # Directories
 train_dir = "data/train"
@@ -14,10 +15,13 @@ test_dir = "data/test"
 
 # Image parameters
 IMG_SIZE = 331  # PNASNet requires 331x331 input size
-BATCH_SIZE = 64
+BATCH_SIZE = 32  # Increased batch size (can be adjusted based on available memory)
 NUM_CLASSES = 50  # Replace with the actual number of classes in your dataset
 EPOCHS = 10
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+NUM_WORKERS = 4
+
+print('Training started using ', torch.device)
 
 # Data Transformations
 train_transforms = transforms.Compose([
@@ -57,13 +61,9 @@ val_dataset = SafeImageFolder(val_dir, transform=val_transforms)
 train_dataset.samples = [s for s in train_dataset.samples if s is not None]
 val_dataset.samples = [s for s in val_dataset.samples if s is not None]
 
-# Data Loaders without multiple cores
-def collate_fn(batch):
-    batch = list(filter(lambda x: x is not None, batch))
-    return torch.utils.data.dataloader.default_collate(batch)
-
-train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate_fn)
-val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn=collate_fn)
+# Data Loaders with multi-threaded data loading
+train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn=lambda x: torch.utils.data.dataloader.default_collate([i for i in x if i is not None]), num_workers= NUM_WORKERS, pin_memory=True)
+val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn=lambda x: torch.utils.data.dataloader.default_collate([i for i in x if i is not None]), num_workers= NUM_WORKERS, pin_memory=True)
 
 # Load Pretrained PNASNet-5 Model
 model = timm.create_model('pnasnet5large', pretrained=True)  # Load PNASNet-5
@@ -80,6 +80,12 @@ optimizer = optim.Adam(model.parameters(), lr=1e-3)
 best_val_acc = 0.0
 training_metrics = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": []}
 
+# Enable cuDNN auto-tuner to find the best algorithm
+torch.backends.cudnn.benchmark = True
+
+# Initialize scaler for mixed precision training
+scaler = GradScaler()
+
 # Training and Validation Loop with Progress Bars
 for epoch in range(EPOCHS):
     # Training phase
@@ -94,11 +100,18 @@ for epoch in range(EPOCHS):
                 continue
             inputs, targets = batch
             inputs, targets = inputs.to(DEVICE), targets.to(DEVICE)
+            
             optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, targets)
-            loss.backward()
-            optimizer.step()
+            
+            # Mixed Precision: Use autocast to reduce memory usage and speed up training
+            with autocast():
+                outputs = model(inputs)
+                loss = criterion(outputs, targets)
+
+            # Backward pass
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             train_loss += loss.item()
             _, predicted = outputs.max(1)
