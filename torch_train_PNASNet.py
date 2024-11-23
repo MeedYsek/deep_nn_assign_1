@@ -15,13 +15,12 @@ test_dir = "data/test"
 
 # Image parameters
 IMG_SIZE = 331  # PNASNet requires 331x331 input size
-BATCH_SIZE = 32  # Increased batch size (can be adjusted based on available memory)
+BATCH_SIZE = 16  # Increased batch size (can be adjusted based on available memory)
 NUM_CLASSES = 50  # Replace with the actual number of classes in your dataset
 EPOCHS = 10
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 NUM_WORKERS = 4
 
-print('Training started using ', torch.cuda.get_device_name)
 
 # Data Transformations
 train_transforms = transforms.Compose([
