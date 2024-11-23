@@ -7,6 +7,7 @@ from tqdm import tqdm
 import timm  # Required for PNASNet-5
 import json  # For saving metrics
 from torch.cuda.amp import autocast, GradScaler  # Mixed precision training
+from torch.optim.lr_scheduler import StepLR  # Added learning rate scheduler
 
 # Directories
 train_dir = "data/train"
@@ -14,13 +15,12 @@ val_dir = "data/val"
 test_dir = "data/test"
 
 # Image parameters
-IMG_SIZE = 331  # PNASNet requires 331x331 input size
-BATCH_SIZE = 16  # Increased batch size (can be adjusted based on available memory)
+IMG_SIZE = 224  # Optimized size for ResNet50 (224x224)
+BATCH_SIZE = 16  # Batch size set to 16 for your GPU
 NUM_CLASSES = 50  # Replace with the actual number of classes in your dataset
 EPOCHS = 10
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-NUM_WORKERS = 4
-
+NUM_WORKERS = 4  # Keep number of workers as 4
 
 # Data Transformations
 train_transforms = transforms.Compose([
@@ -75,16 +75,19 @@ if __name__ == '__main__':
                                              collate_fn=custom_collate_fn,
                                              num_workers=NUM_WORKERS, pin_memory=True)
 
-    # Load Pretrained PNASNet-5 Model
-    model = timm.create_model('pnasnet5large', pretrained=True)  # Load PNASNet-5
+    # Load Pretrained ResNet50 Model
+    model = timm.create_model('resnet50', pretrained=True)  # Load ResNet50
 
     # Modify the final layer for the number of classes
-    model.classifier = nn.Linear(model.num_features, NUM_CLASSES)
+    model.fc = nn.Linear(model.fc.in_features, NUM_CLASSES)
     model = model.to(DEVICE)
 
     # Loss and Optimizer
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    optimizer = optim.Adam(model.parameters(), lr=1e-4)  # Learning rate set to 1e-4
+
+    # Learning rate scheduler (StepLR)
+    scheduler = StepLR(optimizer, step_size=5, gamma=0.1)  # Decrease LR by a factor of 10 every 5 epochs
 
     # Initialize variables to store best model and metrics
     best_val_acc = 0.0
@@ -168,12 +171,15 @@ if __name__ == '__main__':
         # Save the model if validation accuracy improves
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            torch.save(model.state_dict(), "best_model_pnasnet.pth")
+            torch.save(model.state_dict(), "best_model_resnet50.pth")
             print(f"Best model saved with accuracy: {best_val_acc:.2f}%")
 
         print(f"Epoch [{epoch+1}/{EPOCHS}], "
               f"Train Loss: {train_loss/len(train_loader):.4f}, Train Acc: {train_acc:.2f}%, "
               f"Val Loss: {val_loss/len(val_loader):.4f}, Val Acc: {val_acc:.2f}%")
+
+        # Step scheduler at the end of each epoch
+        scheduler.step()
 
     # Save training metrics to a file
     with open("training_metrics.json", "w") as f:
