@@ -21,7 +21,7 @@ EPOCHS = 10
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 NUM_WORKERS = 4
 
-print('Training started using ', torch.device)
+print('Training started using ', torch.cuda.get_device_name)
 
 # Data Transformations
 train_transforms = transforms.Compose([
