@@ -5,8 +5,8 @@ import random
 
 # Paths
 dataset_dir = r"X:\Downloads\reduced-FID"
-output_dir = "data"
-reduction_ratio = 0.8  # keep 80% of the dataset
+output_dir = "bigger_dataset"
+reduction_ratio = 1  # keep 80% of the dataset
 
 print('Started creating split folders...')
 # Create directories for splits

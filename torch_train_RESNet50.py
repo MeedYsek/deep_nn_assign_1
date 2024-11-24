@@ -4,21 +4,25 @@ import torch.optim as optim
 from torchvision import datasets, transforms
 from PIL import UnidentifiedImageError
 from tqdm import tqdm
-import timm  # Required for PNASNet-5
+import timm
 import json  # For saving metrics
 from torch.cuda.amp import autocast, GradScaler  # Mixed precision training
-from torch.optim.lr_scheduler import StepLR  # Added learning rate scheduler
+from torch.optim.lr_scheduler import CosineAnnealingLR  # Updated to CosineAnnealingLR
+from sklearn.metrics import confusion_matrix  # For evaluation
+import seaborn as sns
+import matplotlib.pyplot as plt
+import numpy as np
 
 # Directories
-train_dir = "data/train"
-val_dir = "data/val"
-test_dir = "data/test"
+train_dir = "bigger_dataset/train"
+val_dir = "bigger_dataset/val"
+test_dir = "bigger_dataset/test"
 
 # Image parameters
 IMG_SIZE = 224  # Optimized size for ResNet50 (224x224)
-BATCH_SIZE = 16  # Batch size set to 16 for your GPU
+BATCH_SIZE = 64
 NUM_CLASSES = 50  # Replace with the actual number of classes in your dataset
-EPOCHS = 10
+EPOCHS = 20
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 NUM_WORKERS = 4  # Keep number of workers as 4
 
@@ -26,8 +30,10 @@ NUM_WORKERS = 4  # Keep number of workers as 4
 train_transforms = transforms.Compose([
     transforms.Resize((IMG_SIZE, IMG_SIZE)),
     transforms.RandomHorizontalFlip(),
-    transforms.RandomRotation(20),
-    transforms.RandomResizedCrop(IMG_SIZE, scale=(0.8, 1.0)),
+    transforms.RandomRotation(30),  # Increased rotation
+    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),  # Added jitter
+    transforms.RandomPerspective(distortion_scale=0.1, p=0.5),  # Added perspective
+    transforms.RandomResizedCrop(IMG_SIZE, scale=(0.7, 1.0)),  # Wider scale range
     transforms.ToTensor(),
     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
 ])
@@ -83,11 +89,11 @@ if __name__ == '__main__':
     model = model.to(DEVICE)
 
     # Loss and Optimizer
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=1e-4)  # Learning rate set to 1e-4
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)  # Added label smoothing
+    optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)  # Switched to AdamW with weight decay
 
-    # Learning rate scheduler (StepLR)
-    scheduler = StepLR(optimizer, step_size=5, gamma=0.1)  # Decrease LR by a factor of 10 every 5 epochs
+    # Learning rate scheduler (CosineAnnealingLR)
+    scheduler = CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=1e-6)  # Added cosine annealing
 
     # Initialize variables to store best model and metrics
     best_val_acc = 0.0
@@ -144,6 +150,8 @@ if __name__ == '__main__':
         val_loss = 0
         correct = 0
         total = 0
+        all_targets = []
+        all_predictions = []
         
         with tqdm(total=len(val_loader), desc=f"Epoch {epoch+1}/{EPOCHS} - Validation") as pbar:
             with torch.no_grad():
@@ -159,6 +167,8 @@ if __name__ == '__main__':
                     _, predicted = outputs.max(1)
                     total += targets.size(0)
                     correct += predicted.eq(targets).sum().item()
+                    all_targets.extend(targets.cpu().numpy())
+                    all_predictions.extend(predicted.cpu().numpy())
 
                     # Update progress bar
                     pbar.set_postfix({"Loss": f"{loss.item():.4f}", "Accuracy": f"{100. * correct / total:.2f}%"})
@@ -171,7 +181,7 @@ if __name__ == '__main__':
         # Save the model if validation accuracy improves
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            torch.save(model.state_dict(), "best_model_resnet50.pth")
+            torch.save(model.state_dict(), "best_model_resnet50_bigger_dataset_augmented_data.pth")
             print(f"Best model saved with accuracy: {best_val_acc:.2f}%")
 
         print(f"Epoch [{epoch+1}/{EPOCHS}], "
@@ -181,9 +191,19 @@ if __name__ == '__main__':
         # Step scheduler at the end of each epoch
         scheduler.step()
 
+        # Confusion matrix visualization after validation
+        if epoch == EPOCHS - 1:  # For the last epoch, visualize confusion matrix
+            cm = confusion_matrix(all_targets, all_predictions)
+            plt.figure(figsize=(12, 8))
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=train_dataset.classes, yticklabels=train_dataset.classes)
+            plt.ylabel('Actual')
+            plt.xlabel('Predicted')
+            plt.title(f"Confusion Matrix - Epoch {epoch+1}")
+            plt.show()
+
     # Save training metrics to a file
-    with open("training_metrics.json", "w") as f:
+    with open("training_metrics_bigger_dataset_augmented_data.json", "w") as f:
         json.dump(training_metrics, f)
 
     print(f"Training completed. Best validation accuracy: {best_val_acc:.2f}%. Metrics saved to 'training_metrics.json'.")
-    print(f"Number of corrupted or missing files skipped: {train_dataset.skipped_files + val_dataset.skipped_files}")
+    print(f"Number of skipped files: {train_dataset.skipped_files + val_dataset.skipped_files}")
