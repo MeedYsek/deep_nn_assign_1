@@ -13,7 +13,7 @@ import os
 
 # Konfigurácie
 TEST_DIR = "bigger_dataset/test"
-BATCH_SIZE = 32
+BATCH_SIZE = 8
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 NUM_CLASSES = 50
 
@@ -28,19 +28,22 @@ MODELS_TO_EVALUATE = [
 # Funkcia na rekonštrukciu a načítanie modelov
 def load_model_from_state_dict(model_path, model_type, num_classes, device):
     """
-    Načíta model zo state_dict a rekonštruuje jeho architektúru.
+    Load model from state_dict and reconstruct its architecture.
 
     Args:
-        model_path (str): Cesta k uloženému state_dict.
-        model_type (str): Typ modelu ('resnet18' alebo 'efficientnet_b3').
-        num_classes (int): Počet výstupných tried.
-        device (torch.device): Používané zariadenie (CPU/GPU).
+        model_path (str): Path to the saved state_dict.
+        model_type (str): Model type ('resnet18', 'resnet50', 'efficientnet_b3').
+        num_classes (int): Number of output classes.
+        device (torch.device): Device (CPU/GPU).
 
     Returns:
-        torch.nn.Module: Načítaný model pripravený na evaluáciu.
+        torch.nn.Module: Loaded model ready for evaluation.
     """
     if model_type == "resnet18":
         model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+        model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
+    elif model_type == "resnet50":
+        model = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
         model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
     elif model_type == "efficientnet_b3":
         model = timm.create_model('efficientnet_b3', pretrained=False)
@@ -48,12 +51,13 @@ def load_model_from_state_dict(model_path, model_type, num_classes, device):
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
-    # Načítanie váh modelu
+    # Load the state_dict
     state_dict = torch.load(model_path, map_location=torch.device('cpu'))
     model.load_state_dict(state_dict)
     model = model.to(device)
     model.eval()
     return model
+
 
 # Funkcia na evaluáciu modelu
 def evaluate_model(model, dataloader, classes):

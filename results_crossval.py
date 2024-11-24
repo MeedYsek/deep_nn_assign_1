@@ -15,7 +15,7 @@ import numpy as np
 
 # Konfigurácie
 TEST_DIR = "bigger_dataset/test"
-BATCH_SIZE = 32
+BATCH_SIZE = 8
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 NUM_CLASSES = 50
 K_FOLDS = 5  # Number of folds for cross-validation
