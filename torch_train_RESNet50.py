@@ -19,8 +19,8 @@ val_dir = "bigger_dataset/val"
 test_dir = "bigger_dataset/test"
 
 # Image parameters
-IMG_SIZE = 224  # Optimized size for ResNet50 (224x224)
-BATCH_SIZE = 64
+IMG_SIZE = 300 # was 224
+BATCH_SIZE = 32
 NUM_CLASSES = 50  # Replace with the actual number of classes in your dataset
 EPOCHS = 20
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -82,10 +82,9 @@ if __name__ == '__main__':
                                              num_workers=NUM_WORKERS, pin_memory=True)
 
     # Load Pretrained ResNet50 Model
-    model = timm.create_model('resnet50', pretrained=True)  # Load ResNet50
-
-    # Modify the final layer for the number of classes
-    model.fc = nn.Linear(model.fc.in_features, NUM_CLASSES)
+    # model = timm.create_model('resnet50', pretrained=True)  # Load ResNet50 /got 75.98% on validation
+    model = timm.create_model('efficientnet_b3', pretrained=True)
+    model.classifier = nn.Linear(model.classifier.in_features, NUM_CLASSES)
     model = model.to(DEVICE)
 
     # Loss and Optimizer
@@ -181,7 +180,7 @@ if __name__ == '__main__':
         # Save the model if validation accuracy improves
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            torch.save(model.state_dict(), "best_model_resnet50_bigger_dataset_augmented_data.pth")
+            torch.save(model.state_dict(), "best_model_efficientnet_b3_bigger_dataset_augmented_data.pth")
             print(f"Best model saved with accuracy: {best_val_acc:.2f}%")
 
         print(f"Epoch [{epoch+1}/{EPOCHS}], "
@@ -202,7 +201,7 @@ if __name__ == '__main__':
             plt.show()
 
     # Save training metrics to a file
-    with open("training_metrics_bigger_dataset_augmented_data.json", "w") as f:
+    with open("training_metrics_efficientnet_b3_bigger_dataset_augmented_data.json", "w") as f:
         json.dump(training_metrics, f)
 
     print(f"Training completed. Best validation accuracy: {best_val_acc:.2f}%. Metrics saved to 'training_metrics.json'.")
