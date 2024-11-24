@@ -1,7 +1,7 @@
 # deep_nn_assign_1
 
 link to dataset:
-https://drive.google.com/file/d/1cD27XEsGtxFoq9o35ChLeP6FqBgmepfU/view?usp=sharing
+https://drive.google.com/file/d/1u0K_43MvlgIeB9l5KMUkVSUw5sI7_U1J/view?usp=sharing
 
 models used:
 ResNet50 /got 75.98% on validation /got xx.xx% on test
