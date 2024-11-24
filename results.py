@@ -1,36 +1,61 @@
-from tqdm import tqdm
-from colorama import Fore, Style
 import torch
-import torch.nn as nn
-from torchvision import datasets, transforms
+import timm
+from torchvision import models, datasets, transforms
 from torch.utils.data import DataLoader
 from sklearn.metrics import classification_report, confusion_matrix
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-import timm
+from tqdm import tqdm
+from colorama import Fore, Style
+import gc
 import os
 
-# Configurations
-test_dir = "bigger_dataset/test"
-IMG_SIZE = 300
+# Konfigurácie
+TEST_DIR = "bigger_dataset/test"
 BATCH_SIZE = 32
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-NUM_CLASSES = 50  # Adjust to match your dataset
-MODEL_PATHS = ["best_model_efficientnet_b3_bigger_dataset_augmented_data.pth", "fossil_classifier.pth"]
+NUM_CLASSES = 50
 
-# Data Transformations
-test_transforms = transforms.Compose([
-    transforms.Resize((IMG_SIZE, IMG_SIZE)),
-    transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-])
+# Zoznam modelov na evaluáciu
+MODELS_TO_EVALUATE = [
+    {"path": "fossil_classifier.pth", "type": "resnet18", "img_size": 224},
+    {"path": "best_model_efficientnet_b3_bigger_dataset_augmented_data.pth", "type": "efficientnet_b3", "img_size": 300},
+    {"path": "best_model_resnet50_bigger_dataset_augmented_data.pth", "type": "resnet50", "img_size": 224}
+]
 
-# Dataset and DataLoader
-test_dataset = datasets.ImageFolder(test_dir, transform=test_transforms)
-test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
-# Function to evaluate a model
+# Funkcia na rekonštrukciu a načítanie modelov
+def load_model_from_state_dict(model_path, model_type, num_classes, device):
+    """
+    Načíta model zo state_dict a rekonštruuje jeho architektúru.
+
+    Args:
+        model_path (str): Cesta k uloženému state_dict.
+        model_type (str): Typ modelu ('resnet18' alebo 'efficientnet_b3').
+        num_classes (int): Počet výstupných tried.
+        device (torch.device): Používané zariadenie (CPU/GPU).
+
+    Returns:
+        torch.nn.Module: Načítaný model pripravený na evaluáciu.
+    """
+    if model_type == "resnet18":
+        model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+        model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
+    elif model_type == "efficientnet_b3":
+        model = timm.create_model('efficientnet_b3', pretrained=False)
+        model.classifier = torch.nn.Linear(model.classifier.in_features, num_classes)
+    else:
+        raise ValueError(f"Unsupported model type: {model_type}")
+
+    # Načítanie váh modelu
+    state_dict = torch.load(model_path, map_location=torch.device('cpu'))
+    model.load_state_dict(state_dict)
+    model = model.to(device)
+    model.eval()
+    return model
+
+# Funkcia na evaluáciu modelu
 def evaluate_model(model, dataloader, classes):
     model.eval()
     correct = 0
@@ -54,51 +79,62 @@ def evaluate_model(model, dataloader, classes):
     cm = confusion_matrix(all_labels, all_preds)
     return accuracy, report, cm
 
-# Evaluate each model and store results
+# Evaluácia a zápis do CSV
 results = []
-with tqdm(MODEL_PATHS, desc=Fore.GREEN + "Processing Models" + Style.RESET_ALL, colour="green") as model_progress:
-    for model_path in model_progress:
+with tqdm(MODELS_TO_EVALUATE, desc=Fore.GREEN + "Processing Models" + Style.RESET_ALL, colour="green") as model_progress:
+    for model_info in model_progress:
         try:
-            if not os.path.isfile(model_path):
-                print(Fore.YELLOW + f"Model file {model_path} does not exist. Skipping." + Style.RESET_ALL)
-                continue
+            print(Fore.BLUE + f"Loading model: {model_info['path']} ({model_info['type']})" + Style.RESET_ALL)
+            model = load_model_from_state_dict(
+                model_path=model_info["path"],
+                model_type=model_info["type"],
+                num_classes=NUM_CLASSES,
+                device=DEVICE
+            )
+            print(Fore.BLUE + f"Model {model_info['type']} successfully loaded!" + Style.RESET_ALL)
 
-            # Reconstruct the model architecture (adjust for your use case)
-            model = timm.create_model('efficientnet_b3', pretrained=False)
-            model.classifier = nn.Linear(model.classifier.in_features, NUM_CLASSES)
+            # Transformácie pre testovacie dáta
+            test_transforms = transforms.Compose([
+                transforms.Resize((model_info['img_size'], model_info['img_size'])),
+                transforms.ToTensor(),
+                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+            ])
 
-            # Load the state_dict safely
-            map_location = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            with open(model_path, 'rb') as f:
-                state_dict = torch.load(f, map_location=map_location)
+            # Dataset a DataLoader
+            test_dataset = datasets.ImageFolder(TEST_DIR, transform=test_transforms)
+            test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
-            model.load_state_dict(state_dict)  # Load weights
-            model = model.to(DEVICE)
-
-            print(Fore.BLUE + f"Evaluating model: {model_path}" + Style.RESET_ALL)
             accuracy, report, cm = evaluate_model(model, test_loader, test_dataset.classes)
 
             results.append({
-                "Model": os.path.basename(model_path),
+                "Model": model_info["type"],
                 "Accuracy": accuracy,
                 "Precision": report['weighted avg']['precision'],
                 "Recall": report['weighted avg']['recall'],
                 "F1-score": report['weighted avg']['f1-score']
             })
 
-            # Save confusion matrix as a heatmap
+            # Uloženie konfúznej matice
+            output_folder = "confusion_matrices"
+            os.makedirs(output_folder, exist_ok=True)  # Create the folder if it doesn't exist
             plt.figure(figsize=(10, 8))
             sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=test_dataset.classes, yticklabels=test_dataset.classes)
-            plt.title(f"Confusion Matrix for {os.path.basename(model_path)}")
+            plt.title(f"Confusion Matrix for {model_info['type']}")
             plt.xlabel("Predicted")
             plt.ylabel("Actual")
-            plt.savefig(f"confusion_matrix_{os.path.basename(model_path)}.png")
+            plt.savefig(os.path.join(output_folder, f"confusion_matrix_{model_info['type']}.png"))
             plt.close()
 
         except Exception as e:
-            print(Fore.RED + f"Error loading or evaluating model {model_path}: {e}" + Style.RESET_ALL)
+            print(Fore.RED + f"Failed to load or evaluate model {model_info['path']}: {e}" + Style.RESET_ALL)
 
-# Save results to CSV
+        finally:
+            # Uvoľnenie pamäte
+            del model
+            torch.cuda.empty_cache()
+            gc.collect()
+
+# Export výsledkov do CSV
 results_df = pd.DataFrame(results)
 results_df.to_csv("model_comparisons.csv", index=False)
 print(Fore.GREEN + "Results saved to 'model_comparisons.csv'" + Style.RESET_ALL)
